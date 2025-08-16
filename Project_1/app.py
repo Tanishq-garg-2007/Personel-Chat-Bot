@@ -116,4 +116,6 @@ class Me:
 
 if __name__ == "__main__":
     me = Me()
-    gr.ChatInterface(fn=me.chat).launch()
+    gr.ChatInterface(fn=me.chat).launch(server_name="0.0.0.0", server_port=int(os.getenv("PORT", 7860)))
+
+
