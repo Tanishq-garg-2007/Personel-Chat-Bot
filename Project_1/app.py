@@ -6,11 +6,11 @@ import requests
 from pypdf import PdfReader
 import gradio as gr
 
-
 load_dotenv(override=True)
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 google_api_key = os.getenv("GOOGLE_API_KEY")
-gemini = OpenAI(base_url=GEMINI_BASE_URL, api_key=google_api_key)
+
+
 
 def push(text):
     requests.post(
@@ -27,9 +27,11 @@ def record_user_details(email, name="Name not provided", notes="not provided"):
     push(f"Recording {name} with email {email} and notes {notes}")
     return {"recorded": "ok"}
 
+
 def record_unknown_question(question):
     push(f"Recording {question}")
     return {"recorded": "ok"}
+
 
 record_user_details_json = {
     "name": "record_user_details",
@@ -73,14 +75,14 @@ record_unknown_question_json = {
 }
 
 tools = [{"type": "function", "function": record_user_details_json},
-        {"type": "function", "function": record_unknown_question_json}]
+         {"type": "function", "function": record_unknown_question_json}]
 
 
 class Me:
 
     def __init__(self):
-        self.openai = OpenAI()
-        self.name = "Ed Donner"
+        self.gemini = OpenAI(base_url=GEMINI_BASE_URL, api_key=google_api_key)
+        self.name = "Tanishq Garg"
         reader = PdfReader("me/New Resume 12e9d8.pdf")
         self.linkedin = ""
         for page in reader.pages:
@@ -90,7 +92,6 @@ class Me:
         with open("me/summary.txt", "r", encoding="utf-8") as f:
             self.summary = f.read()
 
-
     def handle_tool_call(self, tool_calls):
         results = []
         for tool_call in tool_calls:
@@ -99,9 +100,9 @@ class Me:
             print(f"Tool called: {tool_name}", flush=True)
             tool = globals().get(tool_name)
             result = tool(**arguments) if tool else {}
-            results.append({"role": "tool","content": json.dumps(result),"tool_call_id": tool_call.id})
+            results.append({"role": "tool", "content": json.dumps(result), "tool_call_id": tool_call.id})
         return results
-    
+
     def system_prompt(self):
         system_prompt = f"You are acting as {self.name}. You are answering questions on {self.name}'s website, \
 particularly questions related to {self.name}'s career, background, skills and experience. \
@@ -114,25 +115,51 @@ If the user is engaging in discussion, try to steer them towards getting in touc
         system_prompt += f"\n\n## Summary:\n{self.summary}\n\n## LinkedIn Profile:\n{self.linkedin}\n\n"
         system_prompt += f"With this context, please chat with the user, always staying in character as {self.name}."
         return system_prompt
-    
+
     def chat(self, message, history):
-        messages = [{"role": "system", "content": self.system_prompt()}] + history + [{"role": "user", "content": message}]
-        done = False
-        while not done:
-            response = self.gemini.chat.completions.create(model="gemini-2.5-flash-preview-05-20", messages=messages, tools=tools)
-            if response.choices[0].finish_reason=="tool_calls":
-                message = response.choices[0].message
-                tool_calls = message.tool_calls
-                results = self.handle_tool_call(tool_calls)
-                messages.append(message)
-                messages.extend(results)
-            else:
-                done = True
-        return response.choices[0].message.content
+        # 1. Construct the initial list of messages from history
+        messages = [{"role": "system", "content": self.system_prompt()}]
+        for user_msg, assistant_msg in history:
+            messages.append({"role": "user", "content": user_msg})
+            messages.append({"role": "assistant", "content": assistant_msg})
+        messages.append({"role": "user", "content": message})
+
+        # 2. First call to the model
+        response = self.gemini.chat.completions.create(
+            model="gemini-2.5-flash-preview-05-20",
+            messages=messages,
+            tools=tools
+        )
+
+        response_message = response.choices[0].message
+
+        # 3. Check if the model wants to call a tool
+        if response_message.tool_calls:
+            # 4. Handle the tool calls
+            tool_calls = response_message.tool_calls
+            results = self.handle_tool_call(tool_calls)
+
+            # 5. Append the model's request and tool results to the conversation
+            messages.append(response_message)
+            messages.extend(results)
+
+            # 6. Call the model a second time with the tool results
+            second_response = self.gemini.chat.completions.create(
+                model="gemini-2.5-flash-preview-05-20",
+                messages=messages,
+                tools=tools,
+            )
+            return second_response.choices[0].message.content
+
+        # 7. If no tool is called, just return the response content
+        return response_message.content
+
+
         
 if __name__ == "__main__":
     me = Me()
     gr.ChatInterface(fn=me.chat).launch(server_name="0.0.0.0", server_port=int(os.getenv("PORT", 7860)))
+
 
 
 
